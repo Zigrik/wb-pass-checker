@@ -1,0 +1,510 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wildberries - Управление пропусками</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f5f5f5;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            margin-bottom: 20px;
+            color: #333;
+            font-size: 1.8rem;
+        }
+
+        h2 {
+            margin-bottom: 15px;
+            color: #555;
+            font-size: 1.3rem;
+        }
+
+        /* Таблица водителей */
+        .drivers-table {
+            background: white;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 30px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            overflow-x: auto;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th, td {
+            padding: 12px 8px;
+            text-align: left;
+            border-bottom: 1px solid #e0e0e0;
+            font-size: 13px;
+        }
+
+        th {
+            background: #f8f9fa;
+            font-weight: 600;
+            color: #555;
+        }
+
+        td input, td select {
+            width: 100%;
+            padding: 6px 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+
+        .status-green {
+            background: #d4edda;
+            color: #155724;
+            padding: 4px 8px;
+            border-radius: 4px;
+            text-align: center;
+            font-weight: 500;
+            display: inline-block;
+        }
+
+        .status-red {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 4px 8px;
+            border-radius: 4px;
+            text-align: center;
+            font-weight: 500;
+            display: inline-block;
+        }
+
+        .btn-save {
+            background: #28a745;
+            color: white;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+
+        .btn-save:hover {
+            background: #218838;
+        }
+
+        .btn-add {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            margin-top: 10px;
+            font-size: 13px;
+        }
+
+        .btn-add:hover {
+            background: #0056b3;
+        }
+
+        /* Таблица пропусков */
+        .passes-table {
+            background: white;
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            overflow-x: auto;
+        }
+
+        .filters {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+            flex-wrap: wrap;
+        }
+
+        .search-input {
+            flex: 1;
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 13px;
+        }
+
+        .refresh-btn {
+            background: #6c757d;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+        }
+
+        .refresh-btn:hover {
+            background: #5a6268;
+        }
+
+        .passes-table table {
+            font-size: 12px;
+        }
+
+        .passes-table th, .passes-table td {
+            padding: 10px 8px;
+        }
+
+        /* Цвета строк пропусков */
+        .row-green {
+            background-color: #d4edda;
+        }
+
+        .row-yellow {
+            background-color: #fff3cd;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 500;
+        }
+
+        .badge-green {
+            background: #28a745;
+            color: white;
+        }
+
+        .badge-yellow {
+            background: #ffc107;
+            color: #333;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 40px;
+            color: #999;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚚 Управление пропусками Wildberries</h1>
+
+        <!-- Таблица водителей -->
+        <div class="drivers-table">
+            <h2>👨‍✈️ Водители и потребность в пропусках (срок ≥ 3 дней)</h2>
+            <table id="driversTable">
+                <thead>
+                    <tr>
+                        <th>Фамилия</th>
+                        <th>Имя</th>
+                        <th>Марка авто</th>
+                        <th>Номер авто</th>
+                        <th>Телефон</th>
+                        <th>Склад</th>
+                        <th>Нужно</th>
+                        <th>Есть (≥3 дней)</th>
+                        <th>Статус</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody id="driversBody">
+                    <tr><td colspan="10" class="loading">Загрузка...</td></tr>
+                </tbody>
+            </table>
+            <button class="btn-add" onclick="addDriver()">+ Добавить водителя</button>
+        </div>
+
+        <!-- Таблица пропусков -->
+        <div class="passes-table">
+            <h2>📋 Актуальные пропуска (от новых к старым)</h2>
+            <div class="filters">
+                <input type="text" id="searchInput" placeholder="🔍 Поиск по ID, водителю или номеру авто..." class="search-input">
+                <button id="refreshBtn" class="refresh-btn">🔄 Обновить</button>
+            </div>
+            <div style="overflow-x: auto;">
+                <table id="passesTable">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Склад</th>
+                            <th>Водитель</th>
+                            <th>Автомобиль</th>
+                            <th>Действителен до</th>
+                            <th>Осталось дней</th>
+                        </tr>
+                    </thead>
+                    <tbody id="passesBody">
+                        <tr><td colspan="6" class="loading">Загрузка...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let offices = [];
+
+        // Загрузка складов
+        async function loadOffices() {
+            try {
+                const response = await fetch('/api/offices');
+                offices = await response.json();
+            } catch (error) {
+                console.error('Error loading offices:', error);
+            }
+        }
+
+        // Загрузка статуса водителей
+        async function loadDriversStatus() {
+            try {
+                const response = await fetch('/api/drivers/status');
+                const statuses = await response.json();
+                renderDriversTable(statuses);
+            } catch (error) {
+                console.error('Error loading drivers status:', error);
+                document.getElementById('driversBody').innerHTML = '<tr><td colspan="10">❌ Ошибка загрузки</td></tr>';
+            }
+        }
+
+        // Загрузка водителей
+        async function loadDrivers() {
+            try {
+                const response = await fetch('/api/drivers');
+                return await response.json();
+            } catch (error) {
+                console.error('Error loading drivers:', error);
+                return [];
+            }
+        }
+
+        // Сохранение водителя
+        async function saveDriver(id, field, value) {
+            try {
+                const drivers = await loadDrivers();
+                const driver = drivers.find(d => d.id === id);
+                if (!driver) return;
+
+                const fieldMap = {
+                    'lastName': 'LastName',
+                    'firstName': 'FirstName',
+                    'carModel': 'CarModel',
+                    'carNumber': 'CarNumber',
+                    'phone': 'Phone',
+                    'officeId': 'OfficeID',
+                    'requiredPass': 'RequiredPass'
+                };
+
+                const goField = fieldMap[field];
+                if (goField) {
+                    if (field === 'officeId') {
+                        driver[goField] = parseInt(value);
+                        const office = offices.find(o => o.id === parseInt(value));
+                        driver.OfficeName = office ? office.name : '';
+                    } else if (field === 'requiredPass') {
+                        driver[goField] = parseInt(value);
+                    } else {
+                        driver[goField] = value;
+                    }
+                }
+
+                const response = await fetch('/api/drivers', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(driver)
+                });
+
+                if (response.ok) {
+                    loadDriversStatus();
+                }
+            } catch (error) {
+                console.error('Error saving driver:', error);
+            }
+        }
+
+        // Добавление нового водителя
+        async function addDriver() {
+            const newDriver = {
+                id: 0,
+                lastName: '',
+                firstName: '',
+                carModel: '',
+                carNumber: '',
+                phone: '',
+                officeId: offices.length > 0 ? offices[0].id : 0,
+                officeName: offices.length > 0 ? offices[0].name : '',
+                requiredPass: 1
+            };
+
+            try {
+                const response = await fetch('/api/drivers', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(newDriver)
+                });
+
+                if (response.ok) {
+                    loadDriversStatus();
+                }
+            } catch (error) {
+                console.error('Error adding driver:', error);
+            }
+        }
+
+        // Удаление водителя
+        async function deleteDriver(id) {
+            if (!confirm('Удалить водителя?')) return;
+            try {
+                const response = await fetch(`/api/drivers?id=${id}`, { method: 'DELETE' });
+                if (response.ok) {
+                    loadDriversStatus();
+                }
+            } catch (error) {
+                console.error('Error deleting driver:', error);
+            }
+        }
+
+        // Отображение таблицы водителей
+        function renderDriversTable(statuses) {
+            const tbody = document.getElementById('driversBody');
+            if (!statuses || statuses.length === 0) {
+                tbody.innerHTML = '运转<td colspan="10" class="empty-state">📭 Нет данных о водителях</td> </tr>';
+                return;
+            }
+
+            tbody.innerHTML = statuses.map(s => `
+                <tr>
+                    <td><input type="text" value="${escapeHtml(s.driver.lastName)}" onchange="saveDriver(${s.driver.id}, 'lastName', this.value)"></td>
+                    <td><input type="text" value="${escapeHtml(s.driver.firstName)}" onchange="saveDriver(${s.driver.id}, 'firstName', this.value)"></td>
+                    <td><input type="text" value="${escapeHtml(s.driver.carModel)}" onchange="saveDriver(${s.driver.id}, 'carModel', this.value)"></td>
+                    <td><input type="text" value="${escapeHtml(s.driver.carNumber)}" onchange="saveDriver(${s.driver.id}, 'carNumber', this.value)"></td>
+                    <td><input type="text" value="${escapeHtml(s.driver.phone)}" onchange="saveDriver(${s.driver.id}, 'phone', this.value)"></td>
+                    <td>
+                        <select onchange="saveDriver(${s.driver.id}, 'officeId', this.value)">
+                            ${offices.map(o => `<option value="${o.id}" ${s.driver.officeId === o.id ? 'selected' : ''}>${escapeHtml(o.name)}</option>`).join('')}
+                        </select>
+                    </td>
+                    <td><input type="number" value="${s.driver.requiredPass}" min="1" style="width:70px" onchange="saveDriver(${s.driver.id}, 'requiredPass', this.value)"></td>
+                    <td><strong>${s.passes3Days}</strong></td>
+                    <td><span class="status-${s.statusColor}">${s.isEnough ? '✅ Достаточно' : '❌ Недостаточно'}</span></td>
+                    <td><button class="btn-save" onclick="deleteDriver(${s.driver.id})" style="background:#dc3545">🗑</button></td>
+                </tr>
+            `).join('');
+        }
+
+        // Загрузка пропусков
+        async function loadPasses() {
+            const tbody = document.getElementById('passesBody');
+            tbody.innerHTML = '<tr><td colspan="6" class="loading">Загрузка...</td></tr>';
+            
+            try {
+                const response = await fetch('/api/passes');
+                const passes = await response.json();
+                
+                if (passes.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="6" class="empty-state">📭 Нет активных пропусков</td></tr>';
+                    return;
+                }
+                
+                const searchTerm = document.getElementById('searchInput').value.toLowerCase().trim();
+                let filteredPasses = passes;
+                
+                if (searchTerm) {
+                    filteredPasses = passes.filter(p => 
+                        p.id.toString().includes(searchTerm) ||
+                        (p.lastName && p.lastName.toLowerCase().includes(searchTerm)) ||
+                        (p.firstName && p.firstName.toLowerCase().includes(searchTerm)) ||
+                        (p.carNumber && p.carNumber.toLowerCase().includes(searchTerm))
+                    );
+                }
+                
+                if (filteredPasses.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="6" class="empty-state">🔍 Ничего не найдено</td></tr>';
+                    return;
+                }
+                
+                tbody.innerHTML = filteredPasses.map(p => `
+                    <tr class="row-${p.rowColor}">
+                        <td>${p.id}</td>
+                        <td>${escapeHtml(p.officeName)}</td>
+                        <td>${escapeHtml(p.lastName)} ${escapeHtml(p.firstName)}</td>
+                        <td>${escapeHtml(p.carModel)} - ${escapeHtml(p.carNumber)}</td>
+                        <td>${formatDate(p.dateEnd)}</td>
+                        <td><span class="badge badge-${p.rowColor}">${p.daysLeft} дн.</span></td>
+                    </tr>
+                `).join('');
+                
+            } catch (error) {
+                console.error('Error loading passes:', error);
+                tbody.innerHTML = '<tr><td colspan="6" class="empty-state">❌ Ошибка загрузки пропусков</td></tr>';
+            }
+        }
+        
+        function formatDate(dateString) {
+            if (!dateString) return 'Не указано';
+            try {
+                const date = new Date(dateString);
+                return date.toLocaleString('ru-RU', {
+                    day: '2-digit',
+                    month: '2-digit',
+                    year: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                });
+            } catch (e) {
+                return dateString;
+            }
+        }
+        
+        function escapeHtml(text) {
+            if (!text) return '';
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+        
+        // Обновление списка
+        document.getElementById('refreshBtn').addEventListener('click', () => {
+            loadPasses();
+            loadDriversStatus();
+        });
+        
+        // Поиск
+        let searchTimeout;
+        document.getElementById('searchInput').addEventListener('input', () => {
+            clearTimeout(searchTimeout);
+            searchTimeout = setTimeout(() => loadPasses(), 300);
+        });
+        
+        // Загрузка данных
+        loadOffices();
+        loadDriversStatus();
+        loadPasses();
+        
+        // Автообновление каждые 30 секунд
+        setInterval(() => {
+            loadPasses();
+            loadDriversStatus();
+        }, 30000);
+    </script>
+</body>
+</html>
