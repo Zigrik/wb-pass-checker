@@ -23,7 +23,7 @@
         }
 
         h1 {
-            margin-bottom: 20px;
+            margin-bottom: 15px;
             color: #333;
             font-size: 1.8rem;
         }
@@ -32,6 +32,20 @@
             margin-bottom: 15px;
             color: #555;
             font-size: 1.3rem;
+        }
+
+        .info-note {
+            background: #e7f3ff;
+            border-left: 4px solid #2196f3;
+            padding: 12px 15px;
+            margin-bottom: 20px;
+            border-radius: 8px;
+            font-size: 13px;
+            color: #0c5460;
+        }
+
+        .info-note strong {
+            color: #0056b3;
         }
 
         /* Таблица водителей */
@@ -90,6 +104,16 @@
             display: inline-block;
         }
 
+        .status-grey {
+            background: #e9ecef;
+            color: #6c757d;
+            padding: 4px 8px;
+            border-radius: 4px;
+            text-align: center;
+            font-weight: 500;
+            display: inline-block;
+        }
+
         .btn-save {
             background: #28a745;
             color: white;
@@ -102,6 +126,54 @@
 
         .btn-save:hover {
             background: #218838;
+        }
+
+        .btn-clear {
+            background: #ffc107;
+            color: #333;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+
+        .btn-clear:hover {
+            background: #e0a800;
+        }
+
+        .btn-restore {
+            background: #17a2b8;
+            color: white;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+
+        .btn-restore:hover {
+            background: #138496;
+        }
+
+        .btn-order {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            margin-left: 5px;
+        }
+
+        .btn-order:hover {
+            background: #0056b3;
+        }
+
+        .btn-order:disabled {
+            background: #6c757d;
+            cursor: not-allowed;
         }
 
         .btn-add {
@@ -203,15 +275,27 @@
             padding: 40px;
             color: #999;
         }
+
+        .driver-inactive {
+            opacity: 0.6;
+            background-color: #f8f9fa;
+        }
+
+        .action-buttons {
+            display: flex;
+            gap: 5px;
+            flex-wrap: wrap;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>🚚 Управление пропусками Wildberries</h1>
+        <div class="info-note" id="dateInfo"></div>
 
         <!-- Таблица водителей -->
         <div class="drivers-table">
-            <h2>👨‍✈️ Водители и потребность в пропусках (срок ≥ 3 дней)</h2>
+            <h2>👨‍✈️ Водители и потребность в пропусках (свежие: до ≥ сегодня+2 дня 03:00)</h2>
             <table id="driversTable">
                 <thead>
                     <tr>
@@ -222,9 +306,9 @@
                         <th>Телефон</th>
                         <th>Склад</th>
                         <th>Нужно</th>
-                        <th>Есть (≥3 дней)</th>
+                        <th>Свежих</th>
                         <th>Статус</th>
-                        <th></th>
+                        <th>Действия</th>
                     </tr>
                 </thead>
                 <tbody id="driversBody">
@@ -251,10 +335,11 @@
                             <th>Автомобиль</th>
                             <th>Действителен до</th>
                             <th>Осталось дней</th>
+                            <th>Свежий</th>
                         </tr>
                     </thead>
                     <tbody id="passesBody">
-                        <tr><td colspan="6" class="loading">Загрузка...</td></tr>
+                        <tr><td colspan="7" class="loading">Загрузка...</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -263,7 +348,80 @@
 
     <script>
         let offices = [];
-
+        
+        // ========== Функции для работы с датами ==========
+        
+        // Получение свежей даты (сегодня + 2 дня, время 03:00)
+        function getFreshDate() {
+            const now = new Date();
+            const fresh = new Date(now);
+            fresh.setDate(now.getDate() + 2);
+            fresh.setHours(3, 0, 0, 0);
+            return fresh;
+        }
+        
+        // Получение сегодняшней даты в 00:00
+        function getTodayStart() {
+            const now = new Date();
+            return new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+        }
+        
+        // Нормализация даты до 03:00 для сравнения
+        function normalizeTo3AM(date) {
+            return new Date(date.getFullYear(), date.getMonth(), date.getDate(), 3, 0, 0, 0);
+        }
+        
+        // Проверка, является ли пропуск свежим (дата окончания >= сегодня+2 дня 03:00)
+        function isFreshPass(endDateStr) {
+            const endDate = new Date(endDateStr);
+            const freshDate = getFreshDate();
+            return endDate >= freshDate;
+        }
+        
+        // Вычисление остатка дней с учетом времени 03:00
+        function getDaysLeft(endDateStr) {
+            const endDate = new Date(endDateStr);
+            const now = new Date();
+            const endNormalized = normalizeTo3AM(endDate);
+            const nowNormalized = normalizeTo3AM(now);
+            const diffMs = endNormalized - nowNormalized;
+            const daysLeft = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+            return daysLeft < 0 ? 0 : daysLeft;
+        }
+        
+        // Форматирование даты
+        function formatDate(dateString) {
+            if (!dateString) return 'Не указано';
+            try {
+                const date = new Date(dateString);
+                return date.toLocaleString('ru-RU', {
+                    day: '2-digit',
+                    month: '2-digit',
+                    year: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                });
+            } catch (e) {
+                return dateString;
+            }
+        }
+        
+        // Отображение информации о датах
+        function updateDateInfo() {
+            const now = new Date();
+            const freshDate = getFreshDate();
+            const todayStart = getTodayStart();
+            const infoDiv = document.getElementById('dateInfo');
+            
+            infoDiv.innerHTML = `
+                📅 <strong>Сегодня:</strong> ${now.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' })} | 
+                <strong>Свежие пропуска:</strong> дата окончания ≥ ${freshDate.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' })} ${freshDate.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}<br>
+                <small>⚠️ Пропуска заканчиваются в 03:00 утра. Пример: выпущенный сегодня (${now.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' })}) пропуск действителен до ${freshDate.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' })} 03:00 и считается свежим.</small>
+            `;
+        }
+        
+        // ========== API вызовы ==========
+        
         // Загрузка складов
         async function loadOffices() {
             try {
@@ -294,6 +452,55 @@
             } catch (error) {
                 console.error('Error loading drivers:', error);
                 return [];
+            }
+        }
+
+        // Массовое создание пропусков для водителя
+        async function createPassesForDriver(driverId, count) {
+            if (!confirm(`Оформить ${count} свежих пропуск(ов) для водителя?\n\nПропуска будут действительны до ${getFreshDate().toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' })} 03:00`)) return;
+            
+            const btn = document.querySelector(`.btn-order[data-id="${driverId}"]`);
+            if (btn) {
+                btn.disabled = true;
+                btn.textContent = '⏳ Оформление...';
+            }
+            
+            try {
+                const response = await fetch('/api/passes/create-batch', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ driverId: driverId, count: count })
+                });
+                
+                const result = await response.json();
+                
+                if (response.ok) {
+                    alert(`✅ Успешно оформлено ${result.count} свежих пропусков!`);
+                    loadDriversStatus();
+                    loadPasses();
+                } else {
+                    alert(`❌ Ошибка: ${result.error || 'Неизвестная ошибка'}`);
+                }
+            } catch (error) {
+                console.error('Error creating passes:', error);
+                alert('❌ Ошибка подключения к серверу');
+            } finally {
+                if (btn) {
+                    btn.disabled = false;
+                    btn.textContent = '📝 Оформить';
+                }
+            }
+        }
+
+        // Переключение активности водителя (очистка/восстановление)
+        async function toggleDriverActive(id) {
+            try {
+                const response = await fetch(`/api/drivers/toggle?id=${id}`, { method: 'POST' });
+                if (response.ok) {
+                    loadDriversStatus();
+                }
+            } catch (error) {
+                console.error('Error toggling driver active:', error);
             }
         }
 
@@ -343,6 +550,8 @@
 
         // Добавление нового водителя
         async function addDriver() {
+            const volgogradOffice = offices.find(o => o.name.includes('Волгоград')) || offices[0];
+            
             const newDriver = {
                 id: 0,
                 lastName: '',
@@ -350,9 +559,10 @@
                 carModel: '',
                 carNumber: '',
                 phone: '',
-                officeId: offices.length > 0 ? offices[0].id : 0,
-                officeName: offices.length > 0 ? offices[0].name : '',
-                requiredPass: 1
+                officeId: volgogradOffice ? volgogradOffice.id : 0,
+                officeName: volgogradOffice ? volgogradOffice.name : '',
+                requiredPass: 1,
+                active: true
             };
 
             try {
@@ -387,41 +597,53 @@
         function renderDriversTable(statuses) {
             const tbody = document.getElementById('driversBody');
             if (!statuses || statuses.length === 0) {
-                tbody.innerHTML = '运转<td colspan="10" class="empty-state">📭 Нет данных о водителях</td> </tr>';
+                tbody.innerHTML = '<tr><td colspan="10" class="empty-state">📭 Нет данных о водителях</td></tr>';
                 return;
             }
 
-            tbody.innerHTML = statuses.map(s => `
-                <tr>
-                    <td><input type="text" value="${escapeHtml(s.driver.lastName)}" onchange="saveDriver(${s.driver.id}, 'lastName', this.value)"></td>
-                    <td><input type="text" value="${escapeHtml(s.driver.firstName)}" onchange="saveDriver(${s.driver.id}, 'firstName', this.value)"></td>
-                    <td><input type="text" value="${escapeHtml(s.driver.carModel)}" onchange="saveDriver(${s.driver.id}, 'carModel', this.value)"></td>
-                    <td><input type="text" value="${escapeHtml(s.driver.carNumber)}" onchange="saveDriver(${s.driver.id}, 'carNumber', this.value)"></td>
-                    <td><input type="text" value="${escapeHtml(s.driver.phone)}" onchange="saveDriver(${s.driver.id}, 'phone', this.value)"></td>
-                    <td>
-                        <select onchange="saveDriver(${s.driver.id}, 'officeId', this.value)">
-                            ${offices.map(o => `<option value="${o.id}" ${s.driver.officeId === o.id ? 'selected' : ''}>${escapeHtml(o.name)}</option>`).join('')}
-                        </select>
-                    </td>
-                    <td><input type="number" value="${s.driver.requiredPass}" min="1" style="width:70px" onchange="saveDriver(${s.driver.id}, 'requiredPass', this.value)"></td>
-                    <td><strong>${s.passes3Days}</strong></td>
-                    <td><span class="status-${s.statusColor}">${s.isEnough ? '✅ Достаточно' : '❌ Недостаточно'}</span></td>
-                    <td><button class="btn-save" onclick="deleteDriver(${s.driver.id})" style="background:#dc3545">🗑</button></td>
-                </tr>
-            `).join('');
+            tbody.innerHTML = statuses.map(s => {
+                const inactiveClass = !s.driver.active ? 'driver-inactive' : '';
+                const statusText = !s.driver.active ? '⭕ Очищен' : (s.isEnough ? '✅ Достаточно' : '❌ Недостаточно');
+                const toggleBtnText = s.driver.active ? '🗑 Очистить' : '🔄 Восстановить';
+                const toggleBtnClass = s.driver.active ? 'btn-clear' : 'btn-restore';
+                const neededCount = s.driver.active && !s.isEnough ? (s.driver.requiredPass - s.passes3Days) : 0;
+                
+                return `
+                    <tr class="${inactiveClass}">
+                        <td><input type="text" value="${escapeHtml(s.driver.lastName)}" onchange="saveDriver(${s.driver.id}, 'lastName', this.value)"></td>
+                        <td><input type="text" value="${escapeHtml(s.driver.firstName)}" onchange="saveDriver(${s.driver.id}, 'firstName', this.value)"></td>
+                        <td><input type="text" value="${escapeHtml(s.driver.carModel)}" onchange="saveDriver(${s.driver.id}, 'carModel', this.value)"></td>
+                        <td><input type="text" value="${escapeHtml(s.driver.carNumber)}" onchange="saveDriver(${s.driver.id}, 'carNumber', this.value)"></td>
+                        <td><input type="text" value="${escapeHtml(s.driver.phone)}" onchange="saveDriver(${s.driver.id}, 'phone', this.value)"></td>
+                        <td>
+                            <select onchange="saveDriver(${s.driver.id}, 'officeId', this.value)">
+                                ${offices.map(o => `<option value="${o.id}" ${s.driver.officeId === o.id ? 'selected' : ''}>${escapeHtml(o.name)}</option>`).join('')}
+                            </select>
+                        </td>
+                        <td><input type="number" value="${s.driver.requiredPass}" min="1" style="width:70px" onchange="saveDriver(${s.driver.id}, 'requiredPass', this.value)"></td>
+                        <td><strong>${s.passes3Days}</strong></td>
+                        <td><span class="status-${s.statusColor}">${statusText}</span></td>
+                        <td class="action-buttons">
+                            ${s.driver.active && !s.isEnough ? `<button class="btn-order" data-id="${s.driver.id}" onclick="createPassesForDriver(${s.driver.id}, ${neededCount})">📝 Оформить (${neededCount})</button>` : ''}
+                            <button class="${toggleBtnClass}" onclick="toggleDriverActive(${s.driver.id})">${toggleBtnText}</button>
+                            <button class="btn-save" onclick="deleteDriver(${s.driver.id})" style="background:#dc3545;">🗑 Удалить</button>
+                        </td>
+                    </tr>
+                `;
+            }).join('');
         }
 
         // Загрузка пропусков
         async function loadPasses() {
             const tbody = document.getElementById('passesBody');
-            tbody.innerHTML = '<tr><td colspan="6" class="loading">Загрузка...</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="7" class="loading">Загрузка...</td></tr>';
             
             try {
                 const response = await fetch('/api/passes');
                 const passes = await response.json();
                 
                 if (passes.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="6" class="empty-state">📭 Нет активных пропусков</td></tr>';
+                    tbody.innerHTML = '<tr><td colspan="7" class="empty-state">📭 Нет активных пропусков</td></tr>';
                     return;
                 }
                 
@@ -438,40 +660,33 @@
                 }
                 
                 if (filteredPasses.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="6" class="empty-state">🔍 Ничего не найдено</td></tr>';
+                    tbody.innerHTML = '<tr><td colspan="7" class="empty-state">🔍 Ничего не найдено</td></tr>';
                     return;
                 }
                 
-                tbody.innerHTML = filteredPasses.map(p => `
-                    <tr class="row-${p.rowColor}">
-                        <td>${p.id}</td>
-                        <td>${escapeHtml(p.officeName)}</td>
-                        <td>${escapeHtml(p.lastName)} ${escapeHtml(p.firstName)}</td>
-                        <td>${escapeHtml(p.carModel)} - ${escapeHtml(p.carNumber)}</td>
-                        <td>${formatDate(p.dateEnd)}</td>
-                        <td><span class="badge badge-${p.rowColor}">${p.daysLeft} дн.</span></td>
-                    </tr>
-                `).join('');
+                const freshDate = getFreshDate();
+                
+                tbody.innerHTML = filteredPasses.map(p => {
+                    const endDate = new Date(p.dateEnd);
+                    const isFresh = endDate >= freshDate;
+                    const freshBadge = isFresh ? '✅ Да' : '❌ Нет';
+                    
+                    return `
+                        <tr class="row-${p.rowColor}">
+                            <td>${p.id}</td>
+                            <td>${escapeHtml(p.officeName)}</td>
+                            <td>${escapeHtml(p.lastName)} ${escapeHtml(p.firstName)}</td>
+                            <td>${escapeHtml(p.carModel)} - ${escapeHtml(p.carNumber)}</td>
+                            <td>${formatDate(p.dateEnd)}</td>
+                            <td><span class="badge badge-${p.rowColor}">${p.daysLeft} дн.</span></td>
+                            <td>${freshBadge}</td>
+                        </tr>
+                    `;
+                }).join('');
                 
             } catch (error) {
                 console.error('Error loading passes:', error);
-                tbody.innerHTML = '<tr><td colspan="6" class="empty-state">❌ Ошибка загрузки пропусков</td></tr>';
-            }
-        }
-        
-        function formatDate(dateString) {
-            if (!dateString) return 'Не указано';
-            try {
-                const date = new Date(dateString);
-                return date.toLocaleString('ru-RU', {
-                    day: '2-digit',
-                    month: '2-digit',
-                    year: 'numeric',
-                    hour: '2-digit',
-                    minute: '2-digit'
-                });
-            } catch (e) {
-                return dateString;
+                tbody.innerHTML = '<tr><td colspan="7" class="empty-state">❌ Ошибка загрузки пропусков</td></tr>';
             }
         }
         
@@ -482,10 +697,13 @@
             return div.innerHTML;
         }
         
+        // ========== Инициализация ==========
+        
         // Обновление списка
         document.getElementById('refreshBtn').addEventListener('click', () => {
             loadPasses();
             loadDriversStatus();
+            updateDateInfo();
         });
         
         // Поиск
@@ -495,7 +713,8 @@
             searchTimeout = setTimeout(() => loadPasses(), 300);
         });
         
-        // Загрузка данных
+        // Инициализация
+        updateDateInfo();
         loadOffices();
         loadDriversStatus();
         loadPasses();
@@ -504,6 +723,7 @@
         setInterval(() => {
             loadPasses();
             loadDriversStatus();
+            updateDateInfo();
         }, 30000);
     </script>
 </body>

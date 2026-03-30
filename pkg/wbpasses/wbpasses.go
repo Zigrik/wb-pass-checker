@@ -29,9 +29,11 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/", s.handleIndex)
 	s.mux.HandleFunc("/api/passes", s.handleGetPasses)
 	s.mux.HandleFunc("/api/passes/create", s.handleCreatePass)
+	s.mux.HandleFunc("/api/passes/create-batch", s.handleCreatePassesBatch)
 	s.mux.HandleFunc("/api/offices", s.handleGetOffices)
 	s.mux.HandleFunc("/api/drivers", s.handleDrivers)
 	s.mux.HandleFunc("/api/drivers/status", s.handleDriversStatus)
+	s.mux.HandleFunc("/api/drivers/toggle", s.handleToggleDriverActive)
 	s.mux.HandleFunc("/api/check-availability", s.handleCheckAvailability)
 }
 
@@ -59,6 +61,11 @@ func GetActivePasses(apiToken, apiURL string) ([]PassWithColor, error) {
 	return GetActivePassesWithColor(apiToken, apiURL)
 }
 
+// CreatePassesForDriverBatch - публичная функция для массового создания пропусков
+func CreatePassesForDriverBatch(apiToken, apiURL string, driver Driver, count int) ([]CreatePassResponse, error) {
+	return CreatePassesForDriver(apiToken, apiURL, driver, count)
+}
+
 // handleIndex - главная страница
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, "web/templates/index.html")
@@ -76,7 +83,7 @@ func (s *Server) handleGetPasses(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(passes)
 }
 
-// handleCreatePass - создание пропуска
+// handleCreatePass - создание одного пропуска
 func (s *Server) handleCreatePass(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -123,6 +130,63 @@ func (s *Server) handleCreatePass(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(response)
+}
+
+// handleCreatePassesBatch - массовое создание пропусков для водителя
+func (s *Server) handleCreatePassesBatch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		DriverID int `json:"driverId"`
+		Count    int `json:"count"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	// Загружаем всех водителей
+	drivers, err := LoadDrivers()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Находим нужного водителя
+	var targetDriver *Driver
+	for i, d := range drivers {
+		if d.ID == req.DriverID {
+			targetDriver = &drivers[i]
+			break
+		}
+	}
+
+	if targetDriver == nil {
+		http.Error(w, "Driver not found", http.StatusNotFound)
+		return
+	}
+
+	log.Printf("Creating %d passes for driver %s %s", req.Count, targetDriver.LastName, targetDriver.FirstName)
+
+	// Создаем пропуска
+	results, err := CreatePassesForDriver(s.config.APIToken, s.config.APIURL, *targetDriver, req.Count)
+	if err != nil {
+		log.Printf("Error creating batch passes: %v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"count":   len(results),
+		"passes":  results,
+	})
 }
 
 // handleGetOffices - получение складов
@@ -188,6 +252,29 @@ func (s *Server) handleDrivers(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// handleToggleDriverActive - переключение активности водителя (очистка/восстановление)
+func (s *Server) handleToggleDriverActive(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	idStr := r.URL.Query().Get("id")
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		http.Error(w, "Invalid id", http.StatusBadRequest)
+		return
+	}
+
+	if err := ToggleDriverActive(id); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
 // handleDriversStatus - получение статуса водителей
 func (s *Server) handleDriversStatus(w http.ResponseWriter, r *http.Request) {
 	statuses, err := CheckPassesAvailability(s.config.APIToken, s.config.APIURL)
@@ -210,7 +297,7 @@ func (s *Server) handleCheckAvailability(w http.ResponseWriter, r *http.Request)
 
 	allEnough := true
 	for _, st := range statuses {
-		if !st.IsEnough {
+		if st.Driver.Active && !st.IsEnough {
 			allEnough = false
 			break
 		}

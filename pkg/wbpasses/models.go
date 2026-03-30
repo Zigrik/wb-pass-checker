@@ -30,17 +30,18 @@ type Driver struct {
 	CarModel     string `json:"carModel"`
 	CarNumber    string `json:"carNumber"`
 	Phone        string `json:"phone"`
-	RequiredPass int    `json:"requiredPass"` // Количество нужных пропусков (срок ≥3 дней)
+	RequiredPass int    `json:"requiredPass"` // Количество нужных пропусков
 	OfficeID     int    `json:"officeId"`
 	OfficeName   string `json:"officeName"`
+	Active       bool   `json:"active"` // true - проверять, false - очищена (не проверять)
 }
 
 // Статус проверки пропусков для водителя
 type DriverStatus struct {
 	Driver      Driver `json:"driver"`
-	Passes3Days int    `json:"passes3Days"` // Пропусков с остатком ≥3 дней
+	Passes3Days int    `json:"passes3Days"` // Пропусков с остатком ≥1 дня (актуальных)
 	IsEnough    bool   `json:"isEnough"`    // Достаточно ли пропусков
-	StatusColor string `json:"statusColor"` // green или red
+	StatusColor string `json:"statusColor"` // green, red, grey (для неактивных)
 }
 
 // Запрос на создание пропуска

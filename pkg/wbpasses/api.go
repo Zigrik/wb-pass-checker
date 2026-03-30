@@ -118,6 +118,22 @@ func GetOffices(apiToken, apiURL string) ([]Office, error) {
 	return offices, nil
 }
 
+// normalizeTo3AM - нормализует время до 03:00 для корректного сравнения
+func normalizeTo3AM(t time.Time) time.Time {
+	return time.Date(t.Year(), t.Month(), t.Day(), 3, 0, 0, 0, t.Location())
+}
+
+// GetFreshDate - возвращает дату, до которой считаются свежие пропуска
+// Свежий пропуск: дата окончания >= сегодня + 2 дня (с учетом времени 03:00)
+func GetFreshDate(now time.Time) time.Time {
+	// Получаем сегодняшнюю дату в 00:00
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	// Добавляем 2 дня
+	freshDate := today.AddDate(0, 0, 2)
+	// Устанавливаем время 03:00
+	return time.Date(freshDate.Year(), freshDate.Month(), freshDate.Day(), 3, 0, 0, 0, freshDate.Location())
+}
+
 // GetActivePassesWithColor - получение активных пропусков с цветовой индикацией
 func GetActivePassesWithColor(apiToken, apiURL string) ([]PassWithColor, error) {
 	passes, err := GetPasses(apiToken, apiURL)
@@ -126,6 +142,8 @@ func GetActivePassesWithColor(apiToken, apiURL string) ([]PassWithColor, error) 
 	}
 
 	now := time.Now()
+	freshDate := GetFreshDate(now)
+
 	var result []PassWithColor
 
 	for _, p := range passes {
@@ -134,15 +152,27 @@ func GetActivePassesWithColor(apiToken, apiURL string) ([]PassWithColor, error) 
 			continue
 		}
 
-		// Пропускаем просроченные
-		if endDate.Before(now) {
+		// Пропускаем просроченные (дата окончания < сегодня 00:00)
+		todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+		if endDate.Before(todayStart) {
 			continue
 		}
 
-		daysLeft := int(endDate.Sub(now).Hours() / 24)
+		// Вычисляем остаток дней с учетом времени 03:00
+		// Нормализуем endDate до 03:00 для корректного сравнения
+		endDateNormalized := normalizeTo3AM(endDate)
+		nowNormalized := normalizeTo3AM(now)
 
+		daysLeft := int(endDateNormalized.Sub(nowNormalized).Hours() / 24)
+		if daysLeft < 0 {
+			daysLeft = 0
+		}
+
+		// Определяем цвет строки:
+		// Зеленый - свежий пропуск (дата окончания >= freshDate)
+		// Желтый - активный, но не свежий
 		rowColor := "yellow"
-		if daysLeft >= 3 {
+		if !endDate.Before(freshDate) {
 			rowColor = "green"
 		}
 
@@ -167,7 +197,8 @@ func GetActivePassesWithColor(apiToken, apiURL string) ([]PassWithColor, error) 
 	return result, nil
 }
 
-// CheckPassesAvailability - проверка актуальности пропусков (только ≥3 дней)
+// CheckPassesAvailability - проверка актуальности пропусков
+// Свежие = дата окончания >= сегодня+2 дня (с учетом времени 03:00)
 func CheckPassesAvailability(apiToken, apiURL string) ([]DriverStatus, error) {
 	// Загружаем водителей
 	drivers, err := LoadDrivers()
@@ -181,21 +212,23 @@ func CheckPassesAvailability(apiToken, apiURL string) ([]DriverStatus, error) {
 		return nil, err
 	}
 
-	// Фильтруем только активные с остатком >= 3 дней
 	now := time.Now()
+	freshDate := GetFreshDate(now)
+
+	// Фильтруем только свежие пропуска (дата окончания >= freshDate)
 	var freshPasses []Pass
 	for _, p := range passes {
 		endDate, err := time.Parse(time.RFC3339, p.DateEnd)
 		if err != nil {
 			continue
 		}
-		daysLeft := int(endDate.Sub(now).Hours() / 24)
-		if daysLeft >= 3 {
+		// Пропуск свежий, если дата окончания >= freshDate
+		if !endDate.Before(freshDate) {
 			freshPasses = append(freshPasses, p)
 		}
 	}
 
-	// Для каждого водителя считаем пропуска
+	// Для каждого водителя считаем свежие пропуска
 	var results []DriverStatus
 	for _, driver := range drivers {
 		status := DriverStatus{
@@ -205,10 +238,18 @@ func CheckPassesAvailability(apiToken, apiURL string) ([]DriverStatus, error) {
 			StatusColor: "red",
 		}
 
-		// Считаем пропуска с остатком >= 3 дней
+		// Если водитель неактивен (очищен), показываем серым
+		if !driver.Active {
+			status.StatusColor = "grey"
+			results = append(results, status)
+			continue
+		}
+
+		// Считаем свежие пропуска для этого водителя
 		for _, pass := range freshPasses {
 			if pass.LastName == driver.LastName &&
 				pass.FirstName == driver.FirstName &&
+				pass.CarModel == driver.CarModel &&
 				pass.CarNumber == driver.CarNumber &&
 				pass.OfficeID == int64(driver.OfficeID) {
 				status.Passes3Days++
@@ -221,6 +262,31 @@ func CheckPassesAvailability(apiToken, apiURL string) ([]DriverStatus, error) {
 		}
 
 		results = append(results, status)
+	}
+
+	return results, nil
+}
+
+// CreatePassesForDriver - создание нескольких пропусков для водителя
+func CreatePassesForDriver(apiToken, apiURL string, driver Driver, count int) ([]CreatePassResponse, error) {
+	var results []CreatePassResponse
+
+	for i := 0; i < count; i++ {
+		// Формируем запрос на создание пропуска
+		req := CreatePassRequest{
+			OrderID:     int64(time.Now().UnixNano() + int64(i)), // Уникальный ID заказа
+			PassType:    "entry",
+			VehicleInfo: driver.CarModel + " " + driver.CarNumber,
+			DriverName:  driver.LastName + " " + driver.FirstName,
+			DriverPhone: driver.Phone,
+			OfficeID:    driver.OfficeID,
+		}
+
+		resp, err := CreatePass(apiToken, apiURL, req)
+		if err != nil {
+			return results, fmt.Errorf("failed to create pass %d for driver %s: %w", i+1, driver.LastName, err)
+		}
+		results = append(results, *resp)
 	}
 
 	return results, nil

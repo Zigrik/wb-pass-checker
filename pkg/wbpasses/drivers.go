@@ -40,12 +40,13 @@ func LoadDrivers() ([]Driver, error) {
 		// Убираем префикс "Driver: " если есть
 		line = strings.TrimPrefix(line, "Driver: ")
 		parts := strings.Split(line, ";")
-		if len(parts) < 8 {
+		if len(parts) < 9 {
 			continue
 		}
 
 		requiredPass, _ := strconv.Atoi(strings.TrimSpace(parts[5]))
 		officeID, _ := strconv.Atoi(strings.TrimSpace(parts[6]))
+		active, _ := strconv.ParseBool(strings.TrimSpace(parts[8]))
 
 		driver := Driver{
 			ID:           id,
@@ -57,6 +58,7 @@ func LoadDrivers() ([]Driver, error) {
 			RequiredPass: requiredPass,
 			OfficeID:     officeID,
 			OfficeName:   strings.TrimSpace(parts[7]),
+			Active:       active,
 		}
 		drivers = append(drivers, driver)
 		id++
@@ -77,12 +79,17 @@ func SaveDrivers(drivers []Driver) error {
 	defer file.Close()
 
 	writer := bufio.NewWriter(file)
-	writer.WriteString("# Формат: Фамилия;Имя;Марка авто;Номер авто;Телефон;Количество нужных пропусков;ID склада;Название склада\n")
+	writer.WriteString("# Формат: Фамилия;Имя;Марка авто;Номер авто;Телефон;Количество нужных пропусков;ID склада;Название склада;Active (1/0)\n")
+	writer.WriteString("# Active = 1 - проверять, Active = 0 - не проверять (очищенная строка)\n")
 
 	for _, d := range drivers {
+		active := "0"
+		if d.Active {
+			active = "1"
+		}
 		line := "Driver: " + d.LastName + ";" + d.FirstName + ";" + d.CarModel + ";" +
 			d.CarNumber + ";" + d.Phone + ";" + strconv.Itoa(d.RequiredPass) + ";" +
-			strconv.Itoa(d.OfficeID) + ";" + d.OfficeName + "\n"
+			strconv.Itoa(d.OfficeID) + ";" + d.OfficeName + ";" + active + "\n"
 		writer.WriteString(line)
 	}
 	return writer.Flush()
@@ -131,4 +138,20 @@ func DeleteDriver(id int) error {
 		}
 	}
 	return SaveDrivers(newDrivers)
+}
+
+// ToggleDriverActive - переключение активности водителя (очистка/восстановление)
+func ToggleDriverActive(id int) error {
+	drivers, err := LoadDrivers()
+	if err != nil {
+		return err
+	}
+
+	for i, d := range drivers {
+		if d.ID == id {
+			drivers[i].Active = !drivers[i].Active
+			break
+		}
+	}
+	return SaveDrivers(drivers)
 }
