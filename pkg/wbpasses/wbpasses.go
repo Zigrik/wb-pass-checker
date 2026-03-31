@@ -2,34 +2,37 @@ package wbpasses
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
 	"time"
 )
 
-// Server - структура веб-сервера
 type Server struct {
 	config Config
 	mux    *http.ServeMux
+	stopCh chan struct{}
 }
 
-// NewServer - создание нового сервера
 func NewServer(config Config) *Server {
 	s := &Server{
 		config: config,
 		mux:    http.NewServeMux(),
+		stopCh: make(chan struct{}),
 	}
 	s.setupRoutes()
 	return s
 }
 
-// setupRoutes - настройка маршрутов
 func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/", s.handleIndex)
 	s.mux.HandleFunc("/api/passes", s.handleGetPasses)
 	s.mux.HandleFunc("/api/passes/create", s.handleCreatePass)
 	s.mux.HandleFunc("/api/passes/create-batch", s.handleCreatePassesBatch)
+	s.mux.HandleFunc("/api/passes/create-all", s.handleCreatePassesForAll)
+	s.mux.HandleFunc("/api/passes/queue", s.handleGetQueue)
+	s.mux.HandleFunc("/api/passes/queue/clear", s.handleClearQueue)
 	s.mux.HandleFunc("/api/offices", s.handleGetOffices)
 	s.mux.HandleFunc("/api/drivers", s.handleDrivers)
 	s.mux.HandleFunc("/api/drivers/status", s.handleDriversStatus)
@@ -37,8 +40,9 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/api/check-availability", s.handleCheckAvailability)
 }
 
-// Start - запуск сервера
 func (s *Server) Start() error {
+	go s.scheduler()
+
 	server := &http.Server{
 		Addr:         ":" + s.config.Port,
 		Handler:      s.mux,
@@ -48,30 +52,111 @@ func (s *Server) Start() error {
 	log.Printf("🚀 Server starting on http://localhost:%s", s.config.Port)
 	log.Printf("📋 API URL: %s", s.config.APIURL)
 	log.Printf("🔑 API Token: %s...", s.config.APIToken[:15])
+	log.Printf("⏰ Планировщик запущен: обновление каждые 3 минуты, создание пропусков по очереди (1 раз в 10 минут)")
 	return server.ListenAndServe()
 }
 
-// GetDriverStatus - публичная функция для проверки статуса водителей (для импорта)
-func GetDriverStatus(apiToken, apiURL string) ([]DriverStatus, error) {
-	return CheckPassesAvailability(apiToken, apiURL)
+func (s *Server) Stop() {
+	close(s.stopCh)
 }
 
-// GetActivePasses - публичная функция для получения активных пропусков
-func GetActivePasses(apiToken, apiURL string) ([]PassWithColor, error) {
-	return GetActivePassesWithColor(apiToken, apiURL)
+func (s *Server) scheduler() {
+	s.processQueue()
+
+	ticker := time.NewTicker(3 * time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			log.Println("🔄 Планировщик: обновление данных и проверка очереди")
+			s.processQueue()
+		case <-s.stopCh:
+			log.Println("⏹️ Планировщик остановлен")
+			return
+		}
+	}
 }
 
-// CreatePassesForDriverBatch - публичная функция для массового создания пропусков
-func CreatePassesForDriverBatch(apiToken, apiURL string, driver Driver, count int) ([]CreatePassResponse, error) {
-	return CreatePassesForDriver(apiToken, apiURL, driver, count)
+func (s *Server) processQueue() {
+	size, err := GetQueueSize()
+	if err != nil {
+		log.Printf("❌ Ошибка получения размера очереди: %v", err)
+		return
+	}
+
+	if size == 0 {
+		log.Println("📭 Очередь пуста")
+		return
+	}
+
+	log.Printf("📋 В очереди %d задач", size)
+
+	processed, err := ProcessNextTask(s.config.APIToken, s.config.APIURL)
+	if err != nil {
+		log.Printf("❌ Ошибка обработки задачи: %v", err)
+		return
+	}
+
+	if processed {
+		log.Println("✅ Обработана одна задача из очереди")
+	} else {
+		queue, _ := LoadQueue()
+		if queue.IsRunning {
+			log.Println("⏳ Обработка уже выполняется")
+		} else if !queue.LastRun.IsZero() && time.Since(queue.LastRun) < 630*time.Second {
+			waitTime := 630*time.Second - time.Since(queue.LastRun)
+			log.Printf("⏰ Ожидание %v до следующего создания пропуска", waitTime.Round(time.Second))
+		}
+	}
 }
 
-// handleIndex - главная страница
+func (s *Server) handleGetQueue(w http.ResponseWriter, r *http.Request) {
+	queue, err := LoadQueue()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	pendingCount := 0
+	for _, task := range queue.Tasks {
+		if task.Status == "pending" {
+			pendingCount++
+		}
+	}
+
+	// Интервал 10 минут 30 секунд (630 секунд)
+	nextRunTime := queue.LastRun.Add(630 * time.Second)
+	canRun := time.Now().After(nextRunTime) && !queue.IsRunning
+
+	// Вычисляем время до следующего запуска в секундах
+	var secondsUntilNext int64 = 0
+	if !canRun && !queue.LastRun.IsZero() {
+		remaining := nextRunTime.Sub(time.Now())
+		if remaining > 0 {
+			secondsUntilNext = int64(remaining.Seconds())
+		}
+	}
+
+	result := map[string]interface{}{
+		"pending":          pendingCount,
+		"total":            len(queue.Tasks),
+		"isRunning":        queue.IsRunning,
+		"lastRun":          queue.LastRun,
+		"nextRunTime":      nextRunTime,
+		"canRun":           canRun,
+		"secondsUntilNext": secondsUntilNext,
+		"tasks":            queue.Tasks,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(result)
+}
+
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, "web/templates/index.html")
 }
 
-// handleGetPasses - получение списка пропусков
 func (s *Server) handleGetPasses(w http.ResponseWriter, r *http.Request) {
 	passes, err := GetActivePassesWithColor(s.config.APIToken, s.config.APIURL)
 	if err != nil {
@@ -83,57 +168,7 @@ func (s *Server) handleGetPasses(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(passes)
 }
 
-// handleCreatePass - создание одного пропуска
 func (s *Server) handleCreatePass(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	var req CreatePassRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
-		return
-	}
-
-	// Валидация
-	if req.OrderID == 0 {
-		http.Error(w, "OrderID is required", http.StatusBadRequest)
-		return
-	}
-	if req.VehicleInfo == "" {
-		http.Error(w, "VehicleInfo is required", http.StatusBadRequest)
-		return
-	}
-	if req.DriverName == "" {
-		http.Error(w, "DriverName is required", http.StatusBadRequest)
-		return
-	}
-	if req.DriverPhone == "" {
-		http.Error(w, "DriverPhone is required", http.StatusBadRequest)
-		return
-	}
-	if req.OfficeID == 0 {
-		http.Error(w, "OfficeID is required", http.StatusBadRequest)
-		return
-	}
-
-	log.Printf("Creating pass for order %d at office %d", req.OrderID, req.OfficeID)
-
-	response, err := CreatePass(s.config.APIToken, s.config.APIURL, req)
-	if err != nil {
-		log.Printf("Error creating pass: %v", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(response)
-}
-
-// handleCreatePassesBatch - массовое создание пропусков для водителя
-func (s *Server) handleCreatePassesBatch(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -141,7 +176,6 @@ func (s *Server) handleCreatePassesBatch(w http.ResponseWriter, r *http.Request)
 
 	var req struct {
 		DriverID int `json:"driverId"`
-		Count    int `json:"count"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -149,14 +183,12 @@ func (s *Server) handleCreatePassesBatch(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Загружаем всех водителей
 	drivers, err := LoadDrivers()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	// Находим нужного водителя
 	var targetDriver *Driver
 	for i, d := range drivers {
 		if d.ID == req.DriverID {
@@ -170,26 +202,155 @@ func (s *Server) handleCreatePassesBatch(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	log.Printf("Creating %d passes for driver %s %s", req.Count, targetDriver.LastName, targetDriver.FirstName)
+	// Добавляем в очередь
+	if err := AddToQueue(*targetDriver); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 
-	// Создаем пропуска
-	results, err := CreatePassesForDriver(s.config.APIToken, s.config.APIURL, *targetDriver, req.Count)
+	// Запускаем обработку очереди
+	go s.processQueue()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": "Пропуск добавлен в очередь. Будет создан автоматически (1 раз в 10 минут)",
+	})
+}
+
+func (s *Server) handleCreatePassesBatch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		DriverID int `json:"driverId"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	drivers, err := LoadDrivers()
 	if err != nil {
-		log.Printf("Error creating batch passes: %v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	var targetDriver *Driver
+	for i, d := range drivers {
+		if d.ID == req.DriverID {
+			targetDriver = &drivers[i]
+			break
+		}
+	}
+
+	if targetDriver == nil {
+		http.Error(w, "Driver not found", http.StatusNotFound)
+		return
+	}
+
+	// Добавляем в очередь (1 пропуск)
+	if err := AddToQueue(*targetDriver); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	go s.processQueue()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": "Пропуск добавлен в очередь. Будет создан автоматически (1 раз в 10 минут)",
+	})
+}
+
+func (s *Server) handleCreatePassesForAll(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	log.Printf("📦 Добавление всех недостающих пропусков в очередь")
+
+	statuses, err := CheckPassesAvailability(s.config.APIToken, s.config.APIURL)
+	if err != nil {
+		log.Printf("❌ Ошибка получения статусов: %v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	var driversToAdd []Driver
+	for _, status := range statuses {
+		if status.Driver.Active && !status.IsEnough {
+			needed := status.Driver.RequiredPass - status.Passes3Days
+			if needed > 0 {
+				log.Printf("  Водитель %s %s: нужно %d пропусков",
+					status.Driver.LastName, status.Driver.FirstName, needed)
+				for i := 0; i < needed; i++ {
+					driversToAdd = append(driversToAdd, status.Driver)
+				}
+			}
+		}
+	}
+
+	if len(driversToAdd) == 0 {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"message": "Нет водителей, нуждающихся в пропусках",
+			"added":   0,
+		})
+		return
+	}
+
+	if err := AddMultipleToQueue(driversToAdd); err != nil {
+		log.Printf("❌ Ошибка добавления в очередь: %v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	log.Printf("✅ Добавлено %d заданий в очередь", len(driversToAdd))
+
+	go s.processQueue()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": fmt.Sprintf("Добавлено %d заданий в очередь. Пропуска будут создаваться автоматически (1 раз в 10 минут)", len(driversToAdd)),
+		"added":   len(driversToAdd),
+	})
+}
+
+func (s *Server) handleClearQueue(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	queue, err := LoadQueue()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	queue.Tasks = []PassTask{}
+	queue.IsRunning = false
+
+	if err := SaveQueue(queue); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
-		"count":   len(results),
-		"passes":  results,
+		"message": "Очередь очищена",
 	})
 }
 
-// handleGetOffices - получение складов
 func (s *Server) handleGetOffices(w http.ResponseWriter, r *http.Request) {
 	offices, err := GetOffices(s.config.APIToken, s.config.APIURL)
 	if err != nil {
@@ -201,7 +362,6 @@ func (s *Server) handleGetOffices(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(offices)
 }
 
-// handleDrivers - CRUD для водителей
 func (s *Server) handleDrivers(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -252,7 +412,6 @@ func (s *Server) handleDrivers(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleToggleDriverActive - переключение активности водителя (очистка/восстановление)
 func (s *Server) handleToggleDriverActive(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -275,7 +434,6 @@ func (s *Server) handleToggleDriverActive(w http.ResponseWriter, r *http.Request
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
-// handleDriversStatus - получение статуса водителей
 func (s *Server) handleDriversStatus(w http.ResponseWriter, r *http.Request) {
 	statuses, err := CheckPassesAvailability(s.config.APIToken, s.config.APIURL)
 	if err != nil {
@@ -287,7 +445,6 @@ func (s *Server) handleDriversStatus(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(statuses)
 }
 
-// handleCheckAvailability - проверка доступности пропусков (для внешнего использования)
 func (s *Server) handleCheckAvailability(w http.ResponseWriter, r *http.Request) {
 	statuses, err := CheckPassesAvailability(s.config.APIToken, s.config.APIURL)
 	if err != nil {

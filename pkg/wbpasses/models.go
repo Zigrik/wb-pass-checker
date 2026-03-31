@@ -29,39 +29,32 @@ type Driver struct {
 	LastName     string `json:"lastName"`
 	CarModel     string `json:"carModel"`
 	CarNumber    string `json:"carNumber"`
-	Phone        string `json:"phone"`
-	RequiredPass int    `json:"requiredPass"` // Количество нужных пропусков
+	RequiredPass int    `json:"requiredPass"`
 	OfficeID     int    `json:"officeId"`
 	OfficeName   string `json:"officeName"`
-	Active       bool   `json:"active"` // true - проверять, false - очищена (не проверять)
+	Active       bool   `json:"active"`
 }
 
 // Статус проверки пропусков для водителя
 type DriverStatus struct {
 	Driver      Driver `json:"driver"`
-	Passes3Days int    `json:"passes3Days"` // Пропусков с остатком ≥1 дня (актуальных)
-	IsEnough    bool   `json:"isEnough"`    // Достаточно ли пропусков
-	StatusColor string `json:"statusColor"` // green, red, grey (для неактивных)
+	Passes3Days int    `json:"passes3Days"`
+	IsEnough    bool   `json:"isEnough"`
+	StatusColor string `json:"statusColor"`
 }
 
 // Запрос на создание пропуска
 type CreatePassRequest struct {
-	OrderID     int64  `json:"orderId"`
-	PassType    string `json:"passType"`
-	VehicleInfo string `json:"vehicleInfo"`
-	DriverName  string `json:"driverName"`
-	DriverPhone string `json:"driverPhone"`
-	OfficeID    int    `json:"officeId"`
+	FirstName string `json:"firstName"`
+	LastName  string `json:"lastName"`
+	CarModel  string `json:"carModel"`
+	CarNumber string `json:"carNumber"`
+	OfficeID  int    `json:"officeId"`
 }
 
 // Ответ на создание пропуска
 type CreatePassResponse struct {
-	ID        int       `json:"id"`
-	OrderID   int64     `json:"orderId"`
-	Status    string    `json:"status"`
-	CreatedAt time.Time `json:"createdAt"`
-	ExpiresAt time.Time `json:"expiresAt"`
-	QRCode    string    `json:"qrCode"`
+	ID int `json:"id"`
 }
 
 // Склад
@@ -74,6 +67,22 @@ type Office struct {
 // Расширенная структура пропуска для отображения с цветом
 type PassWithColor struct {
 	Pass
-	RowColor string `json:"rowColor"` // green, yellow
+	RowColor string `json:"rowColor"`
 	DaysLeft int    `json:"daysLeft"`
+}
+
+// Задача на создание пропуска
+type PassTask struct {
+	DriverID  int       `json:"driverId"`
+	Driver    Driver    `json:"driver"`
+	CreatedAt time.Time `json:"createdAt"`
+	Status    string    `json:"status"` // pending, processing, completed, failed
+	Error     string    `json:"error,omitempty"`
+}
+
+// Очередь пропусков
+type PassQueue struct {
+	Tasks     []PassTask `json:"tasks"`
+	LastRun   time.Time  `json:"lastRun"`
+	IsRunning bool       `json:"isRunning"`
 }

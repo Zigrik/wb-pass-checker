@@ -44,11 +44,6 @@
             color: #0c5460;
         }
 
-        .info-note strong {
-            color: #0056b3;
-        }
-
-        /* Таблица водителей */
         .drivers-table {
             background: white;
             border-radius: 12px;
@@ -191,7 +186,41 @@
             background: #0056b3;
         }
 
-        /* Таблица пропусков */
+        .btn-create-all {
+            background: #28a745;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            margin-top: 10px;
+            font-size: 13px;
+        }
+
+        .btn-create-all:hover {
+            background: #218838;
+        }
+
+        .btn-create-all:disabled {
+            background: #6c757d;
+            cursor: not-allowed;
+        }
+
+        .queue-info {
+            margin-top: 15px;
+            padding: 10px;
+            background: #e7f3ff;
+            border-radius: 8px;
+            font-size: 13px;
+        }
+
+        .queue-timer {
+            font-family: monospace;
+            font-size: 16px;
+            font-weight: bold;
+            color: #0056b3;
+        }
+
         .passes-table {
             background: white;
             border-radius: 12px;
@@ -225,10 +254,6 @@
             font-size: 13px;
         }
 
-        .refresh-btn:hover {
-            background: #5a6268;
-        }
-
         .passes-table table {
             font-size: 12px;
         }
@@ -237,7 +262,6 @@
             padding: 10px 8px;
         }
 
-        /* Цвета строк пропусков */
         .row-green {
             background-color: #d4edda;
         }
@@ -286,6 +310,13 @@
             gap: 5px;
             flex-wrap: wrap;
         }
+
+        .button-group {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+            flex-wrap: wrap;
+        }
     </style>
 </head>
 <body>
@@ -293,9 +324,8 @@
         <h1>🚚 Управление пропусками Wildberries</h1>
         <div class="info-note" id="dateInfo"></div>
 
-        <!-- Таблица водителей -->
         <div class="drivers-table">
-            <h2>👨‍✈️ Водители и потребность в пропусках (свежие: до ≥ сегодня+2 дня 03:00)</h2>
+            <h2>👨‍✈️ Водители и потребность в пропусках (свежие: ≥ сегодня+2 дня)</h2>
             <table id="driversTable">
                 <thead>
                     <tr>
@@ -303,22 +333,28 @@
                         <th>Имя</th>
                         <th>Марка авто</th>
                         <th>Номер авто</th>
-                        <th>Телефон</th>
                         <th>Склад</th>
                         <th>Нужно</th>
                         <th>Свежих</th>
                         <th>Статус</th>
                         <th>Действия</th>
-                    </tr>
-                </thead>
+                    </thead>
                 <tbody id="driversBody">
-                    <tr><td colspan="10" class="loading">Загрузка...</td></tr>
-                </tbody>
+                    <tr><td colspan="9" class="loading">Загрузка...<\/td>                </tbody>
             </table>
-            <button class="btn-add" onclick="addDriver()">+ Добавить водителя</button>
+            <div class="button-group">
+                <button class="btn-add" onclick="addDriver()">+ Добавить водителя</button>
+                <button id="createAllBtn" class="btn-create-all">📦 Заказать всем недостающие</button>
+            </div>
+            <div id="queueInfo" class="queue-info" style="display: none;">
+                <strong>📋 Очередь пропусков:</strong>
+                <span id="queueCount">0</span> заданий в очереди<br>
+                <span id="queueStatus"></span>
+                <div id="timerDisplay" style="margin-top: 5px; font-weight: bold;"></div>
+                <button id="clearQueueBtn" class="btn-clear" style="margin-top: 5px; font-size: 11px;">🗑 Очистить очередь</button>
+            </div>
         </div>
 
-        <!-- Таблица пропусков -->
         <div class="passes-table">
             <h2>📋 Актуальные пропуска (от новых к старым)</h2>
             <div class="filters">
@@ -336,11 +372,9 @@
                             <th>Действителен до</th>
                             <th>Осталось дней</th>
                             <th>Свежий</th>
-                        </tr>
-                    </thead>
+                        </thead>
                     <tbody id="passesBody">
-                        <tr><td colspan="7" class="loading">Загрузка...</td></tr>
-                    </tbody>
+                        <tr><td colspan="7" class="loading">Загрузка...<\/td>                </tbody>
                 </table>
             </div>
         </div>
@@ -348,48 +382,18 @@
 
     <script>
         let offices = [];
-        
-        // ========== Функции для работы с датами ==========
-        
-        // Получение свежей даты (сегодня + 2 дня, время 03:00)
+        let officesLoaded = false;
+        let timerInterval = null;
+        let currentSecondsUntilNext = 0;
+
         function getFreshDate() {
             const now = new Date();
             const fresh = new Date(now);
             fresh.setDate(now.getDate() + 2);
-            fresh.setHours(3, 0, 0, 0);
+            fresh.setHours(0, 0, 0, 0);
             return fresh;
         }
-        
-        // Получение сегодняшней даты в 00:00
-        function getTodayStart() {
-            const now = new Date();
-            return new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
-        }
-        
-        // Нормализация даты до 03:00 для сравнения
-        function normalizeTo3AM(date) {
-            return new Date(date.getFullYear(), date.getMonth(), date.getDate(), 3, 0, 0, 0);
-        }
-        
-        // Проверка, является ли пропуск свежим (дата окончания >= сегодня+2 дня 03:00)
-        function isFreshPass(endDateStr) {
-            const endDate = new Date(endDateStr);
-            const freshDate = getFreshDate();
-            return endDate >= freshDate;
-        }
-        
-        // Вычисление остатка дней с учетом времени 03:00
-        function getDaysLeft(endDateStr) {
-            const endDate = new Date(endDateStr);
-            const now = new Date();
-            const endNormalized = normalizeTo3AM(endDate);
-            const nowNormalized = normalizeTo3AM(now);
-            const diffMs = endNormalized - nowNormalized;
-            const daysLeft = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-            return daysLeft < 0 ? 0 : daysLeft;
-        }
-        
-        // Форматирование даты
+
         function formatDate(dateString) {
             if (!dateString) return 'Не указано';
             try {
@@ -405,34 +409,86 @@
                 return dateString;
             }
         }
-        
-        // Отображение информации о датах
+
+        function formatTime(seconds) {
+            if (seconds <= 0) return '0 сек';
+            const minutes = Math.floor(seconds / 60);
+            const secs = seconds % 60;
+            if (minutes > 0) {
+                return `${minutes} мин ${secs} сек`;
+            }
+            return `${secs} сек`;
+        }
+
+        function updateTimerDisplay() {
+            const timerDisplay = document.getElementById('timerDisplay');
+            if (currentSecondsUntilNext > 0) {
+                timerDisplay.innerHTML = `⏰ Следующий пропуск через: <span class="queue-timer">${formatTime(currentSecondsUntilNext)}</span>`;
+                timerDisplay.style.display = 'block';
+            } else {
+                timerDisplay.style.display = 'none';
+            }
+        }
+
+        function startTimer(seconds) {
+            if (timerInterval) {
+                clearInterval(timerInterval);
+            }
+            
+            currentSecondsUntilNext = seconds;
+            updateTimerDisplay();
+            
+            if (seconds > 0) {
+                timerInterval = setInterval(() => {
+                    if (currentSecondsUntilNext > 0) {
+                        currentSecondsUntilNext--;
+                        updateTimerDisplay();
+                    } else {
+                        if (timerInterval) {
+                            clearInterval(timerInterval);
+                            timerInterval = null;
+                        }
+                        // Обновляем информацию об очереди, когда таймер дошел до 0
+                        loadQueueInfo();
+                    }
+                }, 1000);
+            }
+        }
+
+        function stopTimer() {
+            if (timerInterval) {
+                clearInterval(timerInterval);
+                timerInterval = null;
+            }
+            currentSecondsUntilNext = 0;
+            updateTimerDisplay();
+        }
+
         function updateDateInfo() {
             const now = new Date();
             const freshDate = getFreshDate();
-            const todayStart = getTodayStart();
             const infoDiv = document.getElementById('dateInfo');
-            
             infoDiv.innerHTML = `
-                📅 <strong>Сегодня:</strong> ${now.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' })} | 
-                <strong>Свежие пропуска:</strong> дата окончания ≥ ${freshDate.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' })} ${freshDate.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}<br>
-                <small>⚠️ Пропуска заканчиваются в 03:00 утра. Пример: выпущенный сегодня (${now.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' })}) пропуск действителен до ${freshDate.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' })} 03:00 и считается свежим.</small>
+                📅 <strong>Сегодня:</strong> ${now.toLocaleDateString('ru-RU')} | 
+                <strong>Свежие пропуска:</strong> дата окончания ≥ ${freshDate.toLocaleDateString('ru-RU')}<br>
+                <small>⚠️ Пропуска создаются по очереди (1 раз в 10 минут 30 секунд). Максимум 1 пропуск за раз.</small>
             `;
         }
-        
-        // ========== API вызовы ==========
-        
-        // Загрузка складов
+
         async function loadOffices() {
             try {
                 const response = await fetch('/api/offices');
                 offices = await response.json();
+                officesLoaded = true;
+                loadDriversStatus();
+                loadPasses();
             } catch (error) {
                 console.error('Error loading offices:', error);
+                loadDriversStatus();
+                loadPasses();
             }
         }
 
-        // Загрузка статуса водителей
         async function loadDriversStatus() {
             try {
                 const response = await fetch('/api/drivers/status');
@@ -440,11 +496,10 @@
                 renderDriversTable(statuses);
             } catch (error) {
                 console.error('Error loading drivers status:', error);
-                document.getElementById('driversBody').innerHTML = '<tr><td colspan="10">❌ Ошибка загрузки</td></tr>';
+                document.getElementById('driversBody').innerHTML = '发展<td colspan="9">❌ Ошибка загрузки</td>                </tr>';
             }
         }
 
-        // Загрузка водителей
         async function loadDrivers() {
             try {
                 const response = await fetch('/api/drivers');
@@ -455,34 +510,82 @@
             }
         }
 
-        // Массовое создание пропусков для водителя
-        async function createPassesForDriver(driverId, count) {
-            if (!confirm(`Оформить ${count} свежих пропуск(ов) для водителя?\n\nПропуска будут действительны до ${getFreshDate().toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' })} 03:00`)) return;
-            
+        async function loadQueueInfo() {
+            try {
+                const response = await fetch('/api/passes/queue');
+                const queue = await response.json();
+                
+                const queueInfo = document.getElementById('queueInfo');
+                const queueCountSpan = document.getElementById('queueCount');
+                const queueStatusSpan = document.getElementById('queueStatus');
+                
+                if (queue.pending > 0) {
+                    queueInfo.style.display = 'block';
+                    queueCountSpan.textContent = queue.pending;
+                    
+                    let statusText = '';
+                    if (queue.isRunning) {
+                        statusText = '⏳ Выполняется создание пропуска...';
+                        stopTimer();
+                    } else if (queue.canRun) {
+                        statusText = '✅ Готов к созданию следующего пропуска';
+                        stopTimer();
+                    } else if (queue.secondsUntilNext > 0) {
+                        statusText = '⏰ Ожидание следующего пропуска';
+                        startTimer(queue.secondsUntilNext);
+                    }
+                    queueStatusSpan.textContent = statusText;
+                } else {
+                    queueInfo.style.display = 'none';
+                    stopTimer();
+                }
+            } catch (error) {
+                console.error('Error loading queue info:', error);
+            }
+        }
+
+        async function clearQueue() {
+            if (!confirm('Очистить очередь пропусков? Все незавершенные задания будут удалены.')) return;
+            try {
+                const response = await fetch('/api/passes/queue/clear', { method: 'POST' });
+                const result = await response.json();
+                if (result.success) {
+                    alert('✅ Очередь очищена');
+                    loadQueueInfo();
+                    loadDriversStatus();
+                    stopTimer();
+                }
+            } catch (error) {
+                console.error('Error clearing queue:', error);
+                alert('❌ Ошибка очистки очереди');
+            }
+        }
+
+        async function createPassForDriver(driverId) {
             const btn = document.querySelector(`.btn-order[data-id="${driverId}"]`);
             if (btn) {
                 btn.disabled = true;
-                btn.textContent = '⏳ Оформление...';
+                btn.textContent = '⏳ Добавление...';
             }
             
             try {
-                const response = await fetch('/api/passes/create-batch', {
+                const response = await fetch('/api/passes/create', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ driverId: driverId, count: count })
+                    body: JSON.stringify({ driverId: driverId })
                 });
                 
                 const result = await response.json();
                 
                 if (response.ok) {
-                    alert(`✅ Успешно оформлено ${result.count} свежих пропусков!`);
+                    alert('✅ Пропуск добавлен в очередь. Будет создан автоматически (1 раз в 10 минут 30 секунд)');
+                    loadQueueInfo();
                     loadDriversStatus();
-                    loadPasses();
                 } else {
                     alert(`❌ Ошибка: ${result.error || 'Неизвестная ошибка'}`);
                 }
             } catch (error) {
-                console.error('Error creating passes:', error);
+                console.error('Error creating pass:', error);
                 alert('❌ Ошибка подключения к серверу');
             } finally {
                 if (btn) {
@@ -492,7 +595,35 @@
             }
         }
 
-        // Переключение активности водителя (очистка/восстановление)
+        async function createPassesForAll() {
+            const btn = document.getElementById('createAllBtn');
+            btn.disabled = true;
+            btn.textContent = '⏳ Добавление в очередь...';
+            
+            try {
+                const response = await fetch('/api/passes/create-all', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                
+                const result = await response.json();
+                
+                if (response.ok) {
+                    alert(result.message);
+                    loadQueueInfo();
+                    loadDriversStatus();
+                } else {
+                    alert(`❌ Ошибка: ${result.error || 'Неизвестная ошибка'}`);
+                }
+            } catch (error) {
+                console.error('Error creating passes for all:', error);
+                alert('❌ Ошибка подключения к серверу');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '📦 Заказать всем недостающие';
+            }
+        }
+
         async function toggleDriverActive(id) {
             try {
                 const response = await fetch(`/api/drivers/toggle?id=${id}`, { method: 'POST' });
@@ -504,7 +635,6 @@
             }
         }
 
-        // Сохранение водителя
         async function saveDriver(id, field, value) {
             try {
                 const drivers = await loadDrivers();
@@ -516,23 +646,20 @@
                     'firstName': 'FirstName',
                     'carModel': 'CarModel',
                     'carNumber': 'CarNumber',
-                    'phone': 'Phone',
-                    'officeId': 'OfficeID',
                     'requiredPass': 'RequiredPass'
                 };
 
                 const goField = fieldMap[field];
                 if (goField) {
-                    if (field === 'officeId') {
-                        driver[goField] = parseInt(value);
-                        const office = offices.find(o => o.id === parseInt(value));
-                        driver.OfficeName = office ? office.name : '';
-                    } else if (field === 'requiredPass') {
+                    if (field === 'requiredPass') {
                         driver[goField] = parseInt(value);
                     } else {
                         driver[goField] = value;
                     }
                 }
+
+                driver.OfficeID = 301983;
+                driver.OfficeName = 'Волгоград';
 
                 const response = await fetch('/api/drivers', {
                     method: 'PUT',
@@ -548,19 +675,15 @@
             }
         }
 
-        // Добавление нового водителя
         async function addDriver() {
-            const volgogradOffice = offices.find(o => o.name.includes('Волгоград')) || offices[0];
-            
             const newDriver = {
                 id: 0,
                 lastName: '',
                 firstName: '',
                 carModel: '',
                 carNumber: '',
-                phone: '',
-                officeId: volgogradOffice ? volgogradOffice.id : 0,
-                officeName: volgogradOffice ? volgogradOffice.name : '',
+                officeId: 301983,
+                officeName: 'Волгоград',
                 requiredPass: 1,
                 active: true
             };
@@ -580,7 +703,6 @@
             }
         }
 
-        // Удаление водителя
         async function deleteDriver(id) {
             if (!confirm('Удалить водителя?')) return;
             try {
@@ -593,11 +715,10 @@
             }
         }
 
-        // Отображение таблицы водителей
         function renderDriversTable(statuses) {
             const tbody = document.getElementById('driversBody');
             if (!statuses || statuses.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="10" class="empty-state">📭 Нет данных о водителях</td></tr>';
+                tbody.innerHTML = '发展<td colspan="9" class="empty-state">📭 Нет данных о водителях</td>                </tr>';
                 return;
             }
 
@@ -606,7 +727,6 @@
                 const statusText = !s.driver.active ? '⭕ Очищен' : (s.isEnough ? '✅ Достаточно' : '❌ Недостаточно');
                 const toggleBtnText = s.driver.active ? '🗑 Очистить' : '🔄 Восстановить';
                 const toggleBtnClass = s.driver.active ? 'btn-clear' : 'btn-restore';
-                const neededCount = s.driver.active && !s.isEnough ? (s.driver.requiredPass - s.passes3Days) : 0;
                 
                 return `
                     <tr class="${inactiveClass}">
@@ -614,17 +734,12 @@
                         <td><input type="text" value="${escapeHtml(s.driver.firstName)}" onchange="saveDriver(${s.driver.id}, 'firstName', this.value)"></td>
                         <td><input type="text" value="${escapeHtml(s.driver.carModel)}" onchange="saveDriver(${s.driver.id}, 'carModel', this.value)"></td>
                         <td><input type="text" value="${escapeHtml(s.driver.carNumber)}" onchange="saveDriver(${s.driver.id}, 'carNumber', this.value)"></td>
-                        <td><input type="text" value="${escapeHtml(s.driver.phone)}" onchange="saveDriver(${s.driver.id}, 'phone', this.value)"></td>
-                        <td>
-                            <select onchange="saveDriver(${s.driver.id}, 'officeId', this.value)">
-                                ${offices.map(o => `<option value="${o.id}" ${s.driver.officeId === o.id ? 'selected' : ''}>${escapeHtml(o.name)}</option>`).join('')}
-                            </select>
-                        </td>
+                        <td>Волгоград (301983)</td>
                         <td><input type="number" value="${s.driver.requiredPass}" min="1" style="width:70px" onchange="saveDriver(${s.driver.id}, 'requiredPass', this.value)"></td>
                         <td><strong>${s.passes3Days}</strong></td>
                         <td><span class="status-${s.statusColor}">${statusText}</span></td>
                         <td class="action-buttons">
-                            ${s.driver.active && !s.isEnough ? `<button class="btn-order" data-id="${s.driver.id}" onclick="createPassesForDriver(${s.driver.id}, ${neededCount})">📝 Оформить (${neededCount})</button>` : ''}
+                            ${s.driver.active && !s.isEnough ? `<button class="btn-order" data-id="${s.driver.id}" onclick="createPassForDriver(${s.driver.id})">📝 Оформить</button>` : ''}
                             <button class="${toggleBtnClass}" onclick="toggleDriverActive(${s.driver.id})">${toggleBtnText}</button>
                             <button class="btn-save" onclick="deleteDriver(${s.driver.id})" style="background:#dc3545;">🗑 Удалить</button>
                         </td>
@@ -633,17 +748,16 @@
             }).join('');
         }
 
-        // Загрузка пропусков
         async function loadPasses() {
             const tbody = document.getElementById('passesBody');
-            tbody.innerHTML = '<tr><td colspan="7" class="loading">Загрузка...</td></tr>';
+            tbody.innerHTML = '发展<td colspan="7" class="loading">Загрузка...</td>                </tr>';
             
             try {
                 const response = await fetch('/api/passes');
                 const passes = await response.json();
                 
                 if (passes.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="7" class="empty-state">📭 Нет активных пропусков</td></tr>';
+                    tbody.innerHTML = '发展<td colspan="7" class="empty-state">📭 Нет активных пропусков</td>                </tr>';
                     return;
                 }
                 
@@ -660,7 +774,7 @@
                 }
                 
                 if (filteredPasses.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="7" class="empty-state">🔍 Ничего не найдено</td></tr>';
+                    tbody.innerHTML = '发展<td colspan="7" class="empty-state">🔍 Ничего не найдено</td>                </tr>';
                     return;
                 }
                 
@@ -686,7 +800,7 @@
                 
             } catch (error) {
                 console.error('Error loading passes:', error);
-                tbody.innerHTML = '<tr><td colspan="7" class="empty-state">❌ Ошибка загрузки пропусков</td></tr>';
+                tbody.innerHTML = '发展<td colspan="7" class="empty-state">❌ Ошибка загрузки пропусков</td>                </tr>';
             }
         }
         
@@ -697,34 +811,32 @@
             return div.innerHTML;
         }
         
-        // ========== Инициализация ==========
-        
-        // Обновление списка
         document.getElementById('refreshBtn').addEventListener('click', () => {
             loadPasses();
             loadDriversStatus();
+            loadQueueInfo();
             updateDateInfo();
         });
         
-        // Поиск
+        document.getElementById('createAllBtn').addEventListener('click', createPassesForAll);
+        document.getElementById('clearQueueBtn')?.addEventListener('click', clearQueue);
+        
         let searchTimeout;
         document.getElementById('searchInput').addEventListener('input', () => {
             clearTimeout(searchTimeout);
             searchTimeout = setTimeout(() => loadPasses(), 300);
         });
         
-        // Инициализация
         updateDateInfo();
         loadOffices();
-        loadDriversStatus();
-        loadPasses();
+        loadQueueInfo();
         
-        // Автообновление каждые 30 секунд
         setInterval(() => {
             loadPasses();
             loadDriversStatus();
+            loadQueueInfo();
             updateDateInfo();
-        }, 30000);
+        }, 180000);
     </script>
 </body>
 </html>
